@@ -5,7 +5,7 @@ use crate::pos::Pos;
 use itertools::Itertools;
 use rand::Rng;
 
-fn piece_value(piece: Piece) -> f32 {
+pub fn piece_value(piece: Piece) -> f32 {
     match piece {
         Piece::Pawn {
             orientation: _,
@@ -101,6 +101,7 @@ fn _negamax(board: &Board, depth: i32, mut alpha: f32, beta: f32, color: Color) 
 }
 
 pub fn negamax(board: &Board, color: Color, depth: u32) -> Option<(Pos, Vec<Action>)> {
+    println!("{}", board);
     let mut moves = board.moves(color, true);
     // sort the moves with move_value heuristic
     moves.sort_by(|(pos1, actions1), (pos2, actions2)| {
@@ -123,8 +124,12 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Option<(Pos, Vec<Acti
         let own_moves = curr_board.moves(color, false).len() as f32;
         let op_moves = curr_board.moves(color.next(), true).len() as f32;
         if op_moves == 0. {
-            // if the opponent has no legal move, the score is 0 (pat)
-            score = 0.;
+            // if the opponent has no legal move it is either a draw or a win
+            if curr_board.is_checked(color.next()) {
+                score = f32::MAX;
+            } else {
+                score = 0.;
+            }
         } else {
             // else, the score is raised if the position has more moves for the player and less for the opponent
             // cannot exceed the value of a pawn
@@ -135,6 +140,7 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Option<(Pos, Vec<Acti
             best_score = score;
         }
     }
+    println!("{:?}", best_move);
     best_move
 }
 

@@ -55,7 +55,7 @@ impl Board {
         None
     }
 
-    fn is_checked(&self, color: Color) -> bool {
+    pub fn is_checked(&self, color: Color) -> bool {
         // if this panic then there's no king of this color on the board lol
         let king_pos = self.king_pos(color).unwrap();
         // check if the opponent can capture the king

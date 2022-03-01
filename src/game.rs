@@ -1,188 +1,14 @@
 use crate::{
     ai::negamax,
-    board::Board,
-    make_board::{halved_board, invert_color, standard_board},
+    choss::{draw_choss, ChossGame, SIZE},
     piece::{Action, Color as PieceColor, Piece},
     pos::Pos,
+    utils::screen_to_world,
 };
-use bevy::prelude::*;
-use bevy::render::color::Color;
-use bevy::render::render_resource::{Extent3d, TextureDimension};
-use bevy::render::texture::BevyDefault;
+use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
+use bevy::{render::color::Color, tasks::Task};
+use futures_lite::future;
 use std::collections::HashMap;
-const SIZE: u32 = 64;
-const HSIZE: f32 = SIZE as f32 / 2.;
-
-pub struct ChossGame {
-    pub board: Board,
-    player: PieceColor,
-    turn: u32,
-}
-
-impl ChossGame {
-    pub fn new(player: PieceColor) -> Self {
-        ChossGame {
-            board: invert_color(standard_board()),
-            player: player,
-            turn: 0,
-        }
-    }
-
-    fn world_to_board(&self, world_pos: Vec2) -> Pos {
-        let world_pos = (world_pos
-            + Vec2::new(
-                self.board.width as f32 * HSIZE,
-                self.board.height as f32 * HSIZE,
-            ))
-            / SIZE as f32;
-        Pos(world_pos.x as i32, world_pos.y as i32)
-    }
-
-    fn board_to_world(&self, pos: Pos) -> Transform {
-        Transform::from_xyz(
-            -HSIZE * self.board.width as f32 + (0.5 + pos.0 as f32) * SIZE as f32,
-            -HSIZE * self.board.height as f32 + (0.5 + pos.1 as f32) * SIZE as f32,
-            0.,
-        )
-    }
-
-    pub fn turn_color(&self) -> PieceColor {
-        if self.turn % 2 == 0 {
-            PieceColor::White
-        } else {
-            PieceColor::Black
-        }
-    }
-
-    fn safe_moves(&self, piece: Piece, from: Pos) -> Vec<Vec<Action>> {
-        self.board.filter_safe_moves(
-            self.turn_color(),
-            from,
-            piece.moves(&self.board, from, self.turn_color()),
-        )
-    }
-
-    fn playable_moves(&self, from: Pos) -> Option<Vec<Vec<Action>>> {
-        if let Some(Some((color, piece))) = self.board.get(from) {
-            if *color == self.player && self.player == self.turn_color() {
-                return Some(self.safe_moves(*piece, from));
-            }
-        }
-        None
-    }
-
-    fn playable_move(&self, from: Pos, to: Pos) -> Option<Vec<Action>> {
-        if let Some(moves) = self.playable_moves(from) {
-            for actions in moves {
-                for action in &actions {
-                    if let Action::Go(pos) = action {
-                        if *pos == to {
-                            return Some(actions);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn play(&mut self, pos: Pos, actions: &Vec<Action>) {
-        let color = self.turn_color();
-        self.board = self.board.play(color, pos, &actions);
-        self.turn += 1;
-    }
-}
-
-fn board_tex(board: &Board, size: u32) -> Image {
-    let mut data = vec![255; 4 * board.width * board.height * size as usize * size as usize];
-    for i in 0..(data.len() / 4) {
-        if (i / (board.width * size as usize * size as usize)
-            + (i / size as usize) % board.width as usize)
-            % 2
-            == 0
-        {
-            data[i * 4] = 200;
-            data[i * 4 + 1] = 200;
-            data[i * 4 + 2] = 200;
-        } else {
-            data[i * 4] = 100;
-            data[i * 4 + 1] = 100;
-            data[i * 4 + 2] = 200;
-        }
-    }
-    Image::new(
-        Extent3d {
-            width: board.width as u32 * size,
-            height: board.height as u32 * size,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        BevyDefault::bevy_default(),
-    )
-}
-
-fn piece_tex_name(piece: &Piece, color: &PieceColor) -> String {
-    format!("{}_", piece) + &format!("{:?}", color)[0..1].to_lowercase()
-}
-
-fn draw_choss(
-    mut commands: Commands,
-    choss: Res<ChossGame>,
-    mut textures: ResMut<Assets<Image>>,
-    mut piece_ents: ResMut<HashMap<Pos, Entity>>,
-    server: Res<AssetServer>,
-) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
-    let board_tex = board_tex(&choss.board, SIZE);
-    commands.spawn_bundle(SpriteBundle {
-        texture: textures.add(board_tex),
-        ..Default::default()
-    });
-    for (i, square) in choss.board.squares.iter().enumerate() {
-        if let Some((color, piece)) = square {
-            let handle =
-                server.load(format!("choss_pieces/{}.png", piece_tex_name(piece, color)).as_str());
-            let pos = choss.board.pos(i);
-            piece_ents.insert(
-                pos,
-                commands
-                    .spawn_bundle(SpriteBundle {
-                        sprite: Sprite {
-                            custom_size: Some(Vec2::new(SIZE as f32 * 0.8, SIZE as f32 * 0.8)),
-                            ..Default::default()
-                        },
-                        texture: handle,
-                        transform: choss.board_to_world(pos),
-                        ..Default::default()
-                    })
-                    .id(),
-            );
-        }
-    }
-}
-
-fn screen_to_world(
-    window: &Window,
-    camera: &Camera,
-    camera_transform: &GlobalTransform,
-    screen_pos: Vec2,
-) -> Vec2 {
-    // get the size of the window
-    let window_size = Vec2::new(window.width() as f32, window.height() as f32);
-
-    // convert screen position [0..resolution] to ndc [-1..1] (gpu coordinates)
-    let ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
-
-    // matrix for undoing the projection and camera transform
-    let ndc_to_world = camera_transform.compute_matrix() * camera.projection_matrix.inverse();
-
-    // use it to convert ndc to world-space coordinates
-    let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
-
-    // reduce it to a 2D value
-    world_pos.truncate()
-}
 
 #[derive(Component)]
 struct MovingTo(Transform);
@@ -203,7 +29,6 @@ fn play_move(
     choss.play(pos, &actions);
     let ent = *piece_ents.get(&pos).unwrap();
     for action in actions {
-        println!("Playing {:?} from {:?}", action, pos);
         match action {
             Action::Go(new_pos) => {
                 commands
@@ -244,7 +69,6 @@ fn mouse_button_input(
             let world_pos: Vec2 = screen_to_world(window, camera, camera_transform, screen_pos);
             let pos = choss.world_to_board(world_pos);
             if choss.board.in_bound(pos) {
-                println!("Clicked on {:?}", pos);
                 if let Some(old_pos) = selected.0 {
                     // if the old and new pos correspond to a playable action, play it
                     if let Some(actions) = choss.playable_move(old_pos, pos) {
@@ -324,25 +148,46 @@ fn move_to(
     }
 }
 
-fn die(mut commands: Commands, mut query: Query<Entity, With<Die>>, time: Res<Time>) {
+fn die(mut commands: Commands, mut query: Query<Entity, With<Die>>) {
     for ent in query.iter_mut() {
         // for now we just despawn the entity, might do fancy things later
         commands.entity(ent).despawn();
     }
 }
 
-fn update_board(
-    commands: Commands,
-    choss: ResMut<ChossGame>,
-    piece_ents: ResMut<HashMap<Pos, Entity>>,
+fn start_ai_turn(
+    mut commands: Commands,
+    choss: Res<ChossGame>,
+    thread_pool: Res<AsyncComputeTaskPool>,
 ) {
     if choss.is_changed() {
         // a play has been made, check if it's the AI's turn
         if choss.player != choss.turn_color() {
             // play the AI move
-            println!("thinking ...");
-            let (pos, actions) = negamax(&choss.board, choss.turn_color(), 1).unwrap();
-            println!("found a move");
+            // Spawn new task on the AsyncComputeTaskPool
+            let board = choss.board.clone();
+            let color = choss.turn_color();
+            let depth = if choss.remaining_value() < 10. { 3 } else { 1 };
+            println!("thinking with base depth {}", depth);
+            let task = thread_pool.spawn(async move { negamax(&board, color, depth) });
+            // Spawn new entity and add our new task as a component
+            commands.spawn().insert(task);
+        }
+    }
+}
+
+fn end_ai_turn(
+    mut commands: Commands,
+    mut ai_task: Query<(Entity, &mut Task<Option<(Pos, Vec<Action>)>>)>,
+    choss: ResMut<ChossGame>,
+    piece_ents: ResMut<HashMap<Pos, Entity>>,
+) {
+    if let Ok((entity, mut task)) = ai_task.get_single_mut() {
+        if let Some(Some((pos, actions))) = future::block_on(future::poll_once(&mut *task)) {
+            // Task is complete, so remove task component from entity
+            commands
+                .entity(entity)
+                .remove::<Task<Option<(Pos, Vec<Action>)>>>();
             play_move(commands, choss, piece_ents, pos, actions);
         }
     }
@@ -365,6 +210,7 @@ impl Plugin for Undoing {
             .add_system(display_moves)
             .add_system(move_to)
             .add_system(die)
-            .add_system(update_board);
+            .add_system(start_ai_turn)
+            .add_system(end_ai_turn);
     }
 }

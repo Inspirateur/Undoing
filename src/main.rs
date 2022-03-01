@@ -1,11 +1,12 @@
-#![recursion_limit = "1024"]
 mod ai;
 mod board;
+mod choss;
 mod game;
 mod make_board;
 mod pgn;
 mod piece;
 mod pos;
+mod utils;
 use bevy::prelude::*;
 use game::Undoing;
 
