@@ -16,7 +16,7 @@ const HSIZE: f32 = SIZE as f32 / 2.;
 pub struct ChossGame {
     pub board: Board,
     pub player: Color,
-    turn: u32,
+    pub turn: u32,
 }
 
 impl ChossGame {
@@ -137,7 +137,7 @@ fn board_tex(board: &Board, size: u32) -> Image {
     )
 }
 
-fn piece_tex_name(piece: &Piece, color: &Color) -> String {
+pub fn piece_tex_name(piece: &Piece, color: &Color) -> String {
     format!("{}_", piece) + &format!("{:?}", color)[0..1].to_lowercase()
 }
 

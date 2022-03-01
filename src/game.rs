@@ -1,6 +1,6 @@
 use crate::{
-    ai::negamax,
-    choss::{draw_choss, ChossGame, SIZE},
+    ai::{negamax, random_move},
+    choss::{draw_choss, piece_tex_name, ChossGame, SIZE},
     piece::{Action, Color as PieceColor, Piece},
     pos::Pos,
     utils::screen_to_world,
@@ -17,7 +17,7 @@ struct MovingTo(Transform);
 struct Die;
 
 #[derive(Component)]
-struct PromoteTo(Piece);
+struct PromoteTo(Piece, PieceColor);
 
 fn play_move(
     mut commands: Commands,
@@ -26,6 +26,7 @@ fn play_move(
     pos: Pos,
     actions: Vec<Action>,
 ) {
+    let color = choss.board.get(pos).unwrap().unwrap().0;
     choss.play(pos, &actions);
     let ent = *piece_ents.get(&pos).unwrap();
     for action in actions {
@@ -47,7 +48,7 @@ fn play_move(
                 piece_ents.remove_entry(&new_pos);
             }
             Action::Promotion(new_piece) => {
-                commands.entity(ent).insert(PromoteTo(new_piece));
+                commands.entity(ent).insert(PromoteTo(new_piece, color));
             }
         }
     }
@@ -155,6 +156,23 @@ fn die(mut commands: Commands, mut query: Query<Entity, With<Die>>) {
     }
 }
 
+fn promote(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Handle<Image>, &PromoteTo)>,
+    server: Res<AssetServer>,
+) {
+    for (entity, mut image, promote) in query.iter_mut() {
+        commands.entity(entity).remove::<PromoteTo>();
+        *image = server.load(
+            format!(
+                "choss_pieces/{}.png",
+                piece_tex_name(&promote.0, &promote.1)
+            )
+            .as_str(),
+        );
+    }
+}
+
 fn start_ai_turn(
     mut commands: Commands,
     choss: Res<ChossGame>,
@@ -167,9 +185,20 @@ fn start_ai_turn(
             // Spawn new task on the AsyncComputeTaskPool
             let board = choss.board.clone();
             let color = choss.turn_color();
-            let depth = if choss.remaining_value() < 10. { 3 } else { 1 };
+            let value = choss.remaining_value();
+            let depth = if value < 5. {
+                5
+            } else if value < 10. {
+                3
+            } else {
+                1
+            };
             println!("thinking with base depth {}", depth);
-            let task = thread_pool.spawn(async move { negamax(&board, color, depth) });
+            let task = if choss.turn < 2 {
+                thread_pool.spawn(async move { random_move(&board, color) })
+            } else {
+                thread_pool.spawn(async move { negamax(&board, color, depth) })
+            };
             // Spawn new entity and add our new task as a component
             commands.spawn().insert(task);
         }
@@ -178,16 +207,17 @@ fn start_ai_turn(
 
 fn end_ai_turn(
     mut commands: Commands,
-    mut ai_task: Query<(Entity, &mut Task<Option<(Pos, Vec<Action>)>>)>,
+    mut ai_task: Query<(Entity, &mut Task<Vec<(f32, Pos, Vec<Action>)>>)>,
     choss: ResMut<ChossGame>,
     piece_ents: ResMut<HashMap<Pos, Entity>>,
 ) {
     if let Ok((entity, mut task)) = ai_task.get_single_mut() {
-        if let Some(Some((pos, actions))) = future::block_on(future::poll_once(&mut *task)) {
+        if let Some(moves) = future::block_on(future::poll_once(&mut *task)) {
             // Task is complete, so remove task component from entity
             commands
                 .entity(entity)
-                .remove::<Task<Option<(Pos, Vec<Action>)>>>();
+                .remove::<Task<Vec<(f32, Pos, Vec<Action>)>>>();
+            let (_, pos, actions) = moves[0].to_owned();
             play_move(commands, choss, piece_ents, pos, actions);
         }
     }
@@ -210,6 +240,7 @@ impl Plugin for Undoing {
             .add_system(display_moves)
             .add_system(move_to)
             .add_system(die)
+            .add_system(promote)
             .add_system(start_ai_turn)
             .add_system(end_ai_turn);
     }

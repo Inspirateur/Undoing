@@ -3,7 +3,9 @@ use crate::pgn::move2pgn;
 use crate::piece::{Action, Color, Piece};
 use crate::pos::Pos;
 use itertools::Itertools;
-use rand::Rng;
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
+const MAX_DEPTH: i32 = -6;
 
 pub fn piece_value(piece: Piece) -> f32 {
     match piece {
@@ -62,7 +64,9 @@ fn mat_score(board: &Board) -> f32 {
 
 fn _negamax(board: &Board, depth: i32, mut alpha: f32, beta: f32, color: Color) -> f32 {
     let mut moves;
-    if depth <= 0 {
+    if depth <= MAX_DEPTH {
+        return mat_score(board) * if color == Color::White { 1. } else { -1. };
+    } else if depth <= 0 {
         // if we're out of depth, only explore taking moves
         moves = board.takes(color, false);
     } else {
@@ -100,7 +104,7 @@ fn _negamax(board: &Board, depth: i32, mut alpha: f32, beta: f32, color: Color) 
     }
 }
 
-pub fn negamax(board: &Board, color: Color, depth: u32) -> Option<(Pos, Vec<Action>)> {
+pub fn negamax(board: &Board, color: Color, depth: u32) -> Vec<(f32, Pos, Vec<Action>)> {
     println!("{}", board);
     let mut moves = board.moves(color, true);
     // sort the moves with move_value heuristic
@@ -109,10 +113,9 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Option<(Pos, Vec<Acti
             .partial_cmp(&move_value(board, *pos1, actions1))
             .unwrap()
     });
+    let mut res = Vec::new();
     let mut alpha = f32::NEG_INFINITY;
     let beta = f32::INFINITY;
-    let mut best_score = f32::NEG_INFINITY;
-    let mut best_move = None;
     for (pos, actions) in moves {
         let curr_board = board.play(color, pos, &actions);
         let mut score = -_negamax(&curr_board, depth as i32 - 1, -beta, -alpha, color.next());
@@ -135,21 +138,20 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Option<(Pos, Vec<Acti
             // cannot exceed the value of a pawn
             score += (own_moves / 100. - op_moves / 100.).min(1.);
         }
-        if score > best_score {
-            best_move = Some((pos, actions));
-            best_score = score;
-        }
+        res.push((score, pos, actions));
     }
-    println!("{:?}", best_move);
-    best_move
+    res.sort_by(|(score1, _, _), (score2, _, _)| score2.partial_cmp(score1).unwrap());
+    res
 }
 
-pub fn random_move(board: &Board, color: Color) -> Option<(Pos, Vec<Action>)> {
-    let all_moves = board.moves(color, true);
-    if all_moves.len() == 0 {
-        return None;
-    }
-    Some(all_moves[rand::thread_rng().gen_range(0..all_moves.len())].clone())
+pub fn random_move(board: &Board, color: Color) -> Vec<(f32, Pos, Vec<Action>)> {
+    let mut moves: Vec<(f32, Pos, Vec<Action>)> = board
+        .moves(color, true)
+        .into_iter()
+        .map(|(pos, action)| (0., pos, action))
+        .collect();
+    moves.shuffle(&mut thread_rng());
+    moves
 }
 
 pub fn auto_play(mut board: Board, starting_player: Color, depth: u32) -> String {
@@ -158,15 +160,15 @@ pub fn auto_play(mut board: Board, starting_player: Color, depth: u32) -> String
     let mut turn = 0;
     loop {
         println!("{}\n-------------------\n", board);
-        let move_opt = negamax(&board, player, depth);
-        if move_opt.is_none() {
+        let moves = negamax(&board, player, depth);
+        if moves.len() == 0 {
             println!("\nNo more valid moves");
             break;
         }
-        let (pos, actions) = move_opt.unwrap();
-        let pgn_move = move2pgn(pos, &actions);
+        let (_, pos, actions) = &moves[0];
+        let pgn_move = move2pgn(*pos, actions);
         pgn_moves.push(pgn_move);
-        board = board.play(player, pos, &actions);
+        board = board.play(player, *pos, actions);
         player = player.next();
         turn += 1;
         if turn >= 100 {
@@ -175,73 +177,4 @@ pub fn auto_play(mut board: Board, starting_player: Color, depth: u32) -> String
         }
     }
     pgn_moves.iter().join(" ")
-}
-
-mod tests {
-    use crate::{
-        ai::auto_play,
-        ai::mat_score,
-        ai::negamax,
-        board::Board,
-        make_board::invert_color,
-        make_board::{halved_board, standard_board},
-        pgn::move2pgn,
-        piece::{Action, Color},
-        pos::Pos,
-    };
-
-    #[test]
-    fn depth_3_fork() {
-        let mut board = standard_board();
-        board = board.play(Color::White, Pos(6, 7), &vec![Action::Go(Pos(5, 5))]);
-        board = board.play(Color::Black, Pos(4, 1), &vec![Action::Go(Pos(4, 3))]);
-        board = board.play(Color::White, Pos(4, 6), &vec![Action::Go(Pos(4, 5))]);
-        board = board.play(Color::Black, Pos(3, 1), &vec![Action::Go(Pos(3, 3))]);
-        board = board.play(Color::White, Pos(5, 7), &vec![Action::Go(Pos(3, 5))]);
-        board = board.play(Color::Black, Pos(6, 0), &vec![Action::Go(Pos(5, 2))]);
-        board = board.play(Color::White, Pos(7, 6), &vec![Action::Go(Pos(7, 5))]);
-        println!("{}\n", board);
-        let (pos, actions) = negamax(&board, Color::Black, 3).unwrap();
-        board = board.play(Color::Black, pos, &actions);
-        println!("{}", board);
-        assert!(pos == Pos(4, 3) && actions == vec![Action::Go(Pos(4, 4))]);
-    }
-
-    #[test]
-    fn take_take_take() {
-        let mut board = halved_board();
-        board = board.play(Color::White, Pos(1, 7), &vec![Action::Go(Pos(2, 5))]);
-        board = board.play(Color::Black, Pos(3, 1), &vec![Action::Go(Pos(3, 3))]);
-        board = board.play(Color::White, Pos(4, 6), &vec![Action::Go(Pos(4, 4))]);
-        board = board.play(Color::Black, Pos(1, 0), &vec![Action::Go(Pos(2, 2))]);
-        println!("{}\n", board);
-        let (pos, actions) = negamax(&board, Color::White, 1).unwrap();
-        board = board.play(Color::White, pos, &actions);
-        println!("{}", board);
-        assert!(pos == Pos(4, 4) && actions == vec![Action::Go(Pos(3, 3))]);
-    }
-
-    #[test]
-    fn wtf() {
-        let mut board = halved_board();
-        board = board.play(Color::White, Pos(3, 6), &vec![Action::Go(Pos(3, 5))]);
-        board = board.play(Color::Black, Pos(1, 1), &vec![Action::Go(Pos(1, 2))]);
-        board = board.play(Color::White, Pos(2, 7), &vec![Action::Go(Pos(4, 5))]);
-        board = board.play(Color::Black, Pos(3, 1), &vec![Action::Go(Pos(3, 2))]);
-        board = board.play(Color::White, Pos(4, 7), &vec![Action::Go(Pos(0, 4))]);
-        board = board.play(Color::Black, Pos(4, 0), &vec![Action::Go(Pos(3, 3))]);
-        println!("{}\n", board);
-        let (pos, actions) = negamax(&board, Color::Black, 2).unwrap();
-        board = board.play(Color::Black, pos, &actions);
-        println!("{}", board);
-    }
-
-    #[test]
-    fn color_invariant() {
-        let board = halved_board();
-        let pgn_moves1 = auto_play(board.clone(), Color::White, 1);
-        let board = invert_color(board);
-        let pgn_moves2 = auto_play(board, Color::Black, 1);
-        assert!(pgn_moves1 == pgn_moves2);
-    }
 }
