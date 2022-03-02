@@ -22,7 +22,7 @@ pub struct ChossGame {
 impl ChossGame {
     pub fn new(player: Color) -> Self {
         ChossGame {
-            board: standard_board(),
+            board: halved_board(),
             player: player,
             turn: 0,
         }
@@ -148,7 +148,8 @@ pub fn draw_choss(
     mut piece_ents: ResMut<HashMap<Pos, Entity>>,
     server: Res<AssetServer>,
 ) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    let mut camera = OrthographicCameraBundle::new_2d();
+    commands.spawn_bundle(camera);
     let board_tex = board_tex(&choss.board, SIZE);
     commands.spawn_bundle(SpriteBundle {
         texture: textures.add(board_tex),

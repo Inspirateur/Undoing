@@ -129,7 +129,7 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Vec<(f32, Pos, Vec<Ac
         if op_moves == 0. {
             // if the opponent has no legal move it is either a draw or a win
             if curr_board.is_checked(color.next()) {
-                score = f32::MAX;
+                score = f32::INFINITY;
             } else {
                 score = 0.;
             }

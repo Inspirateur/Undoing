@@ -1,5 +1,6 @@
 mod ai;
 mod board;
+mod character;
 mod choss;
 mod game;
 mod make_board;
@@ -12,6 +13,7 @@ use game::Undoing;
 
 fn main() {
     App::new()
+        .insert_resource(ClearColor(Color::rgb(0.15, 0.15, 0.2)))
         .insert_resource(WindowDescriptor {
             width: 720.,
             ..Default::default()
