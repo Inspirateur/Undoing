@@ -10,3 +10,6 @@ bevy = "0.6"
 rand = "*"
 itertools = "*"
 futures-lite = "*"
+
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"

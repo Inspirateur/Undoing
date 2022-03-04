@@ -6,9 +6,8 @@ use crate::{
     pos::Pos,
     utils::screen_to_world,
 };
-use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
+use bevy::prelude::*;
 use bevy::{render::color::Color, tasks::Task};
-use futures_lite::future;
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
 
@@ -50,6 +49,7 @@ struct Game {
     turn: u32,
     last_state: Option<ChossGame>,
     carl_lines: Vec<String>,
+    last_move_time: f64,
 }
 
 impl Game {
@@ -195,9 +195,13 @@ fn play_move(
     mut query_face: Query<&mut Handle<Image>, With<DialogueFace>>,
     server: Res<AssetServer>,
     audio: Res<Audio>,
+    time: Res<Time>,
 ) {
     // only play the move if no one's talking and no one's undoing
-    if query_say.is_empty() && query_undo.is_empty() {
+    if query_say.is_empty()
+        && query_undo.is_empty()
+        && time.seconds_since_startup() - game.last_move_time > 1.
+    {
         if let Some((pos, actions)) = &game.to_play {
             let color = choss.turn_color();
             choss.play(*pos, actions);
@@ -256,6 +260,7 @@ fn play_move(
                     game.status = GameStatus::Draw;
                 }
             }
+            game.last_move_time = time.seconds_since_startup();
         }
     }
 }
@@ -386,98 +391,70 @@ fn promote(
 #[derive(Component)]
 struct WaitUntil(f64);
 
+#[derive(Component)]
+struct AITask(Task<Vec<(f32, Pos, Vec<Action>)>>);
+
 fn start_ai_turn(
     mut commands: Commands,
-    game: Res<Game>,
+    mut game: ResMut<Game>,
     choss: Res<ChossGame>,
-    ai_task: Query<&Task<Vec<(f32, Pos, Vec<Action>)>>>,
+    moving_query: Query<(), With<MovingTo>>,
     query_undo: Query<(), With<UndoingComp>>,
-    thread_pool: Res<AsyncComputeTaskPool>,
-    time: Res<Time>,
 ) {
-    if ai_task.is_empty()
+    if moving_query.is_empty()
         && query_undo.is_empty()
         && game.status == GameStatus::Playing
         && choss.player != choss.turn_color()
         && game.to_play.is_none()
     {
         // play the AI move
-        // Spawn new task on the AsyncComputeTaskPool
-        let board = choss.board.clone();
-        let color = choss.turn_color();
-        let value = choss.remaining_value();
-        let depth = if value < 5. {
-            4
-        } else if value < 10. {
-            2
+        if let Some(cached_moves) = game.cached_moves_mut(choss.turn) {
+            let (_, pos, actions) = cached_moves.pop().unwrap();
+            if cached_moves.len() == 0 {
+                commands
+                    .entity(game.opponent())
+                    .insert(Say::new("panicked", "If this doesn't work ..."));
+            }
+            game.to_play = Some((pos, actions));
         } else {
-            1
-        };
-        println!("thinking with base depth {}", depth);
-        let task = thread_pool.spawn(async move { negamax(&board, color, depth) });
-        // Spawn new entity and add our new task as a component
-        commands
-            .spawn()
-            .insert(task)
-            .insert(WaitUntil(time.seconds_since_startup() + 1.));
-    }
-}
-
-fn end_ai_turn(
-    mut commands: Commands,
-    mut ai_task: Query<(Entity, &mut Task<Vec<(f32, Pos, Vec<Action>)>>, &WaitUntil)>,
-    mut game: ResMut<Game>,
-    choss: Res<ChossGame>,
-    time: Res<Time>,
-) {
-    if let Ok((entity, mut task, wait_until)) = ai_task.get_single_mut() {
-        if time.seconds_since_startup() >= wait_until.0 {
-            if let Some(cached_moves) = game.cached_moves_mut(choss.turn) {
-                // We have cached moves, discard the eval
+            let value = choss.remaining_value();
+            let depth = if value < 5. {
+                4
+            } else if value < 10. {
+                2
+            } else {
+                1
+            };
+            println!("thinking with base depth {}", depth);
+            let moves = negamax(&choss.board, choss.turn_color(), depth);
+            // Randomly pick a move with that's not too far away from best in the 3 first moves
+            let best_move = moves[0].clone();
+            let best_score = best_move.0;
+            let mut filtered_moves: Vec<_> = moves
+                .into_iter()
+                .take(3)
+                .filter(|(score, _, _)| *score >= best_score - 3.)
+                .collect();
+            if filtered_moves.len() == 0 {
+                // this shouldn't be possible but it seems like it is lol
+                println!("wtf ? {}", best_score);
+                filtered_moves = vec![best_move];
+            }
+            filtered_moves.shuffle(&mut rand::thread_rng());
+            let (_, pos, actions) = filtered_moves.pop().unwrap();
+            if let Some((face, text)) = game.get_dialogue(best_score) {
                 commands
-                    .entity(entity)
-                    .remove::<Task<Vec<(f32, Pos, Vec<Action>)>>>();
-                let (_, pos, actions) = cached_moves.pop().unwrap();
-                if cached_moves.len() == 0 {
-                    commands
-                        .entity(game.opponent())
-                        .insert(Say::new("panicked", "If this doesn't work ..."));
-                }
+                    .entity(game.opponent())
+                    .insert(Say::new(face, text));
+            }
+            // check if we must undo here
+            if game.should_undo(best_score) {
+                commands.spawn().insert(UndoingComp::new());
+            } else {
+                game.last_state = Some((*choss).clone());
+                game.last_eval = Some(best_score);
                 game.to_play = Some((pos, actions));
-            } else if let Some(moves) = future::block_on(future::poll_once(&mut *task)) {
-                // Task is complete, so remove task component from entity
-                commands
-                    .entity(entity)
-                    .remove::<Task<Vec<(f32, Pos, Vec<Action>)>>>();
-                // Randomly pick a move with that's not too far away from best in the 3 first moves
-                let best_move = moves[0].clone();
-                let best_score = best_move.0;
-                let mut filtered_moves: Vec<_> = moves
-                    .into_iter()
-                    .take(3)
-                    .filter(|(score, _, _)| *score >= best_score - 3.)
-                    .collect();
-                if filtered_moves.len() == 0 {
-                    // this shouldn't be possible but it seems like it is lol
-                    println!("wtf ? {}", best_score);
-                    filtered_moves = vec![best_move];
-                }
-                filtered_moves.shuffle(&mut rand::thread_rng());
-                let (_, pos, actions) = filtered_moves.pop().unwrap();
-                if let Some((face, text)) = game.get_dialogue(best_score) {
-                    commands
-                        .entity(game.opponent())
-                        .insert(Say::new(face, text));
-                }
-                // check if we must undo here
-                if game.should_undo(best_score) {
-                    commands.spawn().insert(UndoingComp::new());
-                } else {
-                    game.last_state = Some((*choss).clone());
-                    game.last_eval = Some(best_score);
-                    game.to_play = Some((pos, actions));
-                    game.update_cached_moves(filtered_moves, choss.turn);
-                }
+                game.update_cached_moves(filtered_moves, choss.turn);
             }
         }
     }
@@ -520,7 +497,8 @@ fn undo(
                 } else {
                     undoingcomp.speed -= undoingcomp.max_speed * 0.5 * time.delta_seconds();
                     if undoingcomp.speed < 400. {
-                        // undoing is overs
+                        // undoing is over
+                        game.last_move_time = time.seconds_since_startup() + 1.;
                         undoingcomp.speed = 0.;
                         transform.translation.x = 0.;
                         commands.entity(entity).despawn();
@@ -728,9 +706,8 @@ impl Plugin for Undoing {
             .add_system(move_to)
             .add_system(die)
             .add_system(promote)
-            .add_system(start_ai_turn)
+            .add_system(start_ai_turn.after("play"))
             // ensure dialogue gets instanciated before the next play_move call
-            .add_system(end_ai_turn.after("play"))
             .add_system(start_game.label("start"))
             .add_system(end_game.after("start"))
             .add_system(place_pieces)
