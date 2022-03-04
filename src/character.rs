@@ -1,7 +1,6 @@
 use crate::choss::{ChossGame, HSIZE};
 use bevy::prelude::*;
 use std::collections::HashMap;
-use std::fs;
 
 const CHAR_SEC: f64 = 0.04;
 #[derive(Component)]
@@ -12,26 +11,17 @@ pub struct Character {
 }
 
 impl Character {
-    pub fn new(name: impl ToString, server: &AssetServer) -> Self {
+    pub fn new(name: impl ToString, facenames: Vec<String>, server: &AssetServer) -> Self {
         let name = name.to_string();
         // try to load faces
         let mut faces = HashMap::new();
-        if let Ok(paths) = fs::read_dir(format!("./assets/{}/", name.to_lowercase())) {
-            for path_res in paths {
-                if let Ok(path) = path_res {
-                    // we pop the assets folder from the path because the AssetServer starts from there
-                    if let Ok(path) = path.path().strip_prefix("./assets") {
-                        if let Some(path_str) = path.as_os_str().to_str() {
-                            if let Some(filename_os) = path.file_stem() {
-                                if let Some(filename) = filename_os.to_str() {
-                                    faces.insert(filename.to_string(), server.load(path_str));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        for face in facenames {
+            faces.insert(
+                face.clone(),
+                server.load(format!("{}/{}.png", name.to_lowercase(), face).as_str()),
+            );
         }
+
         // try to load voice
         let voice = server.load(&format!(
             "sounds/{}.ogg",
@@ -126,7 +116,7 @@ fn setup(mut commands: Commands, server: Res<AssetServer>, choss: Res<ChossGame>
             },
             texture: server.load("empty.png"),
             transform: Transform::from_xyz(
-                -HSIZE * choss.board.width as f32 - 100.,
+                -HSIZE * choss.board.width as f32 - 80.,
                 HSIZE * (choss.board.height + 2) as f32,
                 0.,
             ),

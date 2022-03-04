@@ -174,12 +174,29 @@ impl UndoingComp {
 fn create_opponents(mut commands: Commands, server: Res<AssetServer>, mut game: ResMut<Game>) {
     let alice_entity = commands
         .spawn()
-        .insert(Character::new("Alice", &server))
+        .insert(Character::new(
+            "Alice",
+            vec![
+                "happy".to_string(),
+                "neutral".to_string(),
+                "weary".to_string(),
+            ],
+            &server,
+        ))
         .id();
     game.opponents.push(alice_entity);
     let carl_entity = commands
         .spawn()
-        .insert(Character::new("Carl Blok", &server))
+        .insert(Character::new(
+            "Carl Blok",
+            vec![
+                "exhausted".to_string(),
+                "neutral".to_string(),
+                "panicked".to_string(),
+                "smug".to_string(),
+            ],
+            &server,
+        ))
         .id();
     game.opponents.push(carl_entity);
 }
