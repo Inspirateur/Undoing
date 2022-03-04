@@ -4,7 +4,6 @@ mod character;
 mod choss;
 mod game;
 mod make_board;
-mod pgn;
 mod piece;
 mod pos;
 mod utils;

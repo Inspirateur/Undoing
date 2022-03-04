@@ -64,19 +64,3 @@ pub fn halved_board() -> Board {
         Piece::Queen,
     ])
 }
-
-pub fn invert_color(board: Board) -> Board {
-    let mut inverted = Board::new(board.width, board.height);
-    inverted.squares = board
-        .squares
-        .iter()
-        .map(|square| {
-            if let Some((color, piece)) = square {
-                Some((color.next(), *piece))
-            } else {
-                None
-            }
-        })
-        .collect();
-    inverted
-}
