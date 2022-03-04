@@ -8,11 +8,11 @@ use crate::{
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension};
 use bevy::render::texture::BevyDefault;
-use std::collections::HashMap;
 
 pub const SIZE: u32 = 64;
-const HSIZE: f32 = SIZE as f32 / 2.;
+pub const HSIZE: f32 = SIZE as f32 / 2.;
 
+#[derive(Clone)]
 pub struct ChossGame {
     pub board: Board,
     pub player: Color,
@@ -145,35 +145,13 @@ pub fn draw_choss(
     mut commands: Commands,
     choss: Res<ChossGame>,
     mut textures: ResMut<Assets<Image>>,
-    mut piece_ents: ResMut<HashMap<Pos, Entity>>,
-    server: Res<AssetServer>,
 ) {
     let mut camera = OrthographicCameraBundle::new_2d();
+    camera.transform.translation += Vec3::new(0., SIZE as f32, 0.);
     commands.spawn_bundle(camera);
     let board_tex = board_tex(&choss.board, SIZE);
     commands.spawn_bundle(SpriteBundle {
         texture: textures.add(board_tex),
         ..Default::default()
     });
-    for (i, square) in choss.board.squares.iter().enumerate() {
-        if let Some((color, piece)) = square {
-            let handle =
-                server.load(format!("choss_pieces/{}.png", piece_tex_name(piece, color)).as_str());
-            let pos = choss.board.pos(i);
-            piece_ents.insert(
-                pos,
-                commands
-                    .spawn_bundle(SpriteBundle {
-                        sprite: Sprite {
-                            custom_size: Some(Vec2::new(SIZE as f32 * 0.8, SIZE as f32 * 0.8)),
-                            ..Default::default()
-                        },
-                        texture: handle,
-                        transform: choss.board_to_world(pos),
-                        ..Default::default()
-                    })
-                    .id(),
-            );
-        }
-    }
 }

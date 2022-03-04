@@ -1,10 +1,6 @@
 use crate::board::Board;
-use crate::pgn::move2pgn;
 use crate::piece::{Action, Color, Piece};
 use crate::pos::Pos;
-use itertools::Itertools;
-use rand::prelude::SliceRandom;
-use rand::thread_rng;
 const MAX_DEPTH: i32 = -6;
 
 pub fn piece_value(piece: Piece) -> f32 {
@@ -114,15 +110,15 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Vec<(f32, Pos, Vec<Ac
             .unwrap()
     });
     let mut res = Vec::new();
-    let mut alpha = f32::NEG_INFINITY;
-    let beta = f32::INFINITY;
     for (pos, actions) in moves {
         let curr_board = board.play(color, pos, &actions);
-        let mut score = -_negamax(&curr_board, depth as i32 - 1, -beta, -alpha, color.next());
-        // since the score can change right after, we take -2 off alpha just to be safe
-        // otherwise a move that has been cut off by _negamax could be chosen after the score update,
-        // which is very bad because _negamax cut it off early knowing that it could NOT be chosen
-        alpha = alpha.max(score - 2.);
+        let mut score = -_negamax(
+            &curr_board,
+            depth as i32 - 1,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            color.next(),
+        );
         // compute an auxiliary score based on how many safe moves are available for both player in the next position
         let own_moves = curr_board.moves(color, false).len() as f32;
         let op_moves = curr_board.moves(color.next(), true).len() as f32;
@@ -142,39 +138,4 @@ pub fn negamax(board: &Board, color: Color, depth: u32) -> Vec<(f32, Pos, Vec<Ac
     }
     res.sort_by(|(score1, _, _), (score2, _, _)| score2.partial_cmp(score1).unwrap());
     res
-}
-
-pub fn random_move(board: &Board, color: Color) -> Vec<(f32, Pos, Vec<Action>)> {
-    let mut moves: Vec<(f32, Pos, Vec<Action>)> = board
-        .moves(color, true)
-        .into_iter()
-        .map(|(pos, action)| (0., pos, action))
-        .collect();
-    moves.shuffle(&mut thread_rng());
-    moves
-}
-
-pub fn auto_play(mut board: Board, starting_player: Color, depth: u32) -> String {
-    let mut pgn_moves: Vec<String> = Vec::new();
-    let mut player = starting_player;
-    let mut turn = 0;
-    loop {
-        println!("{}\n-------------------\n", board);
-        let moves = negamax(&board, player, depth);
-        if moves.len() == 0 {
-            println!("\nNo more valid moves");
-            break;
-        }
-        let (_, pos, actions) = &moves[0];
-        let pgn_move = move2pgn(*pos, actions);
-        pgn_moves.push(pgn_move);
-        board = board.play(player, *pos, actions);
-        player = player.next();
-        turn += 1;
-        if turn >= 100 {
-            println!("\nGame too long");
-            break;
-        }
-    }
-    pgn_moves.iter().join(" ")
 }
