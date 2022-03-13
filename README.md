@@ -1,2 +1,5 @@
 # Undoing
-2022 Bevy Jam entry
+"A regular Choss club with a special student"  
+
+Play in browser here !  
+https://inspirateur.itch.io/undoing
